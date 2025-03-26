@@ -93,17 +93,20 @@ td_s32 yuv420spFrameCrop(ot_svp_dst_img* dstf, ot_video_frame_info* srcf,
     int w_crop = dstf->width;
     int h_crop = dstf->height;
     
+    // determine cropping range inside source frame
     int src_x1 = x_crop >= 0 ? x_crop : 0;
     int src_y1 = y_crop >= 0 ? y_crop : 0;
     int src_x2 = x_crop + w_crop <= srcf->video_frame.width ? x_crop + w_crop : srcf->video_frame.width;
     int src_y2 = y_crop + h_crop <= srcf->video_frame.height ? y_crop + h_crop : srcf->video_frame.height;
 
-    int crop_w = src_x2 - src_x1;  
-    int crop_h = src_y2 - src_y1;  
+    int crop_w = src_x2 - src_x1;  // actual crop width
+    int crop_h = src_y2 - src_y1;  // actual crop height
 
+    // determine dst offset if crop starts out-of-bounds (black padding)
     int dst_x = x_crop < 0 ? -x_crop : 0;
     int dst_y = y_crop < 0 ? -y_crop : 0;
 
+    // copy Y plane
     src_data.phys_addr = srcf->video_frame.phys_addr[0] + src_y1 * srcf->video_frame.stride[0] + src_x1;
     src_data.width = crop_w;
     src_data.height = crop_h;
@@ -129,7 +132,7 @@ td_s32 yuv420spFrameCrop(ot_svp_dst_img* dstf, ot_video_frame_info* srcf,
     src_data.height = crop_h / 2;
     src_data.stride = srcf->video_frame.stride[1];
 
-    dst_data.phys_addr = dstf->phys_addr[1];
+    dst_data.phys_addr = dstf->phys_addr[1] + (dst_y / 2) * dstf->stride[1] + dst_x;
     dst_data.width = crop_w;
     dst_data.height = crop_h / 2;
     dst_data.stride = dstf->stride[1];

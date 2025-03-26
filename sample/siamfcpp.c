@@ -15,8 +15,9 @@
 #define TEMPLATE_FAKE_INPUT_SIZE 128
 #define SEARCH_INPUT_SIZE 303
 #define SEARCH_FAKE_INPUT_SIZE 304
-#define SCORE_THRESHOLD 0.0f
-#define USE_KALMAN_FILTER 0
+#define SCORE_THRESHOLD 0.6f
+#define USE_KALMAN_FILTER 1
+static td_bool is_detected = TD_FALSE;
 
 static ot_vpss_grp g_vpssGrp;
 static ot_vpss_chn g_vpssChn;
@@ -56,6 +57,9 @@ static void siamfcppTemplateGetCrop(stmTrackerState* state, float context_amount
 
     // force crop x to be even since crop on YUV420SP
     crop[0] &= ~1;
+    crop[1] &= ~1;
+    crop[2] &= ~1;
+    crop[3] &= ~1;
 }
 
 
@@ -79,6 +83,42 @@ static void siamfcppSearchGetCrop(stmTrackerState* state, float context_amount, 
 
     // force crop x to be even since crop on YUV420SP
     crop[0] &= ~1;
+    crop[1] &= ~1;
+    crop[2] &= ~1;
+    crop[3] &= ~1;
+}
+
+static td_void save_rgb(const char* filename, ot_svp_img* img) {
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) {
+        printf("failed to open file %s\n", filename);
+        return;
+    }
+
+
+    td_s32 size = img->width * img->height * 3;
+    fwrite((void*)img->virt_addr[0], 1, size, fp);
+
+    fclose(fp);
+    printf("save RGB image to %s\n", filename);
+}
+
+
+static td_void save_yuv420sp(const char *filename, ot_svp_img *img) {
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) {
+        printf("failed to open file %s\n", filename);
+        return;
+    }
+
+    // write Y plane (640 * 640)
+    fwrite((void*)img->virt_addr[0], 1, img->width * img->height, fp);
+
+    // write UV plane (320 * 320)
+    fwrite((void*)img->virt_addr[1], 1, (img->width * img->height) / 2, fp);
+
+    fclose(fp);
+    printf("save YUV image to %s\n", filename);
 }
 
 
@@ -163,8 +203,9 @@ void *siamfcpp_proc_run(void *parg) {
     size_t imgSearchSize = imgSearch.width * imgSearch.height * 3;
 
     float context_amount = 0.5f;
-    td_bool is_init = TD_FALSE;
-    td_bool is_detected = TD_FALSE; 
+    td_bool is_init = TD_FALSE; 
+    // td_bool is_detected = TD_FALSE;
+    int frame_index = 0;
     while (g_thdThread) {
         long time_start = getms();
         ret = ss_mpi_vpss_get_chn_frame(vpss_grp, vpss_chn, &frame_info, milli_sec);
@@ -174,10 +215,12 @@ void *siamfcpp_proc_run(void *parg) {
             continue;
         }
 
-        if (USE_KALMAN_FILTER && !is_init) {
+        if (USE_KALMAN_FILTER && is_init) {
+
+            printf("---------------im here----------------\n");
             float ux = 0.0f;
             float uy = 0.0f;
-            kf_correct(ux, uy, 0.1);
+            kf_predict(ux, uy);
             float kf_pred_cx, kf_pred_cy; 
             kf_get_predicted_position(&kf_pred_cx, &kf_pred_cy);
             state->cx = kf_pred_cx;
@@ -192,6 +235,7 @@ void *siamfcpp_proc_run(void *parg) {
         } else {
             siamfcppSearchGetCrop(state, context_amount, crop);
         }
+        printf("crop: %d, %d, %d, %d\n", crop[0], crop[1], crop[2], crop[3]);
         ot_svp_img imgCrop;
         ot_vb_blk vb_blk_crop = createYuv420spFrame(&imgCrop, crop[2], crop[3]);
         if (vb_blk_crop == OT_VB_INVALID_HANDLE) {
@@ -235,6 +279,9 @@ void *siamfcpp_proc_run(void *parg) {
         sample_print("model inference done, time: %ld ms\n", t_e_inference - t_s_inference);
 
         is_detected = result_state->score > SCORE_THRESHOLD;
+        // if (frame_index > 300) is_detected = 0;
+        printf("is_detected: %d\n", is_detected);
+        printf("result_state->score: %.2f, SCORE_THRESHOLD: %.2f\n", result_state->score, SCORE_THRESHOLD);
         if (USE_KALMAN_FILTER) {
             if (is_detected) {
                 float meas_std = 0.1f;
@@ -248,13 +295,38 @@ void *siamfcpp_proc_run(void *parg) {
             result_state->cy = kf_cor_cy;
         }
 
+        
         if (is_detected) {
-            state = result_state; 
+            *state = *result_state;  // update state if score higher than threshold
         }
 
-        sample_print("       state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", state->cx, state->cy, state->w, state->h, state->score);
-        sample_print("result_state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", result_state->cx, result_state->cy, result_state->w, result_state->h, result_state->score);
+        sample_print("       state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", state->cx, 
+            state->cy, state->w, state->h, state->score);
+        sample_print("result_state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", result_state->cx,
+             result_state->cy, result_state->w, result_state->h, result_state->score);
 
+
+        // debug 
+        // char filename_resize[100];
+        // snprintf(filename_resize, sizeof(filename_resize), "./resize_img/frame_%d_%.2f.rgb", frame_index, result_state->score);
+        // if (frame_index == 0) {
+        //     save_rgb(filename_resize, &imgTemplate);
+        // } else {
+        //     save_rgb(filename_resize, &imgSearch);
+        // }
+
+        // char filename_crop[100];
+        // snprintf(filename_crop, sizeof(filename_crop), "./crop_img/frame_%d.yuv", frame_index);
+        // save_yuv420sp(filename_crop, &imgCrop);
+
+
+        // if (frame_index ==1) {
+        //     g_thdThread = 0;
+        // }
+
+
+
+        // clean up code
 create_rgbFrame_failed:
         ss_mpi_sys_munmap(imgRGB.virt_addr[0], imgRGB.width * imgRGB.height * 3);
         ss_mpi_vb_release_blk(vb_blk_rgb); 
@@ -277,6 +349,8 @@ create_yuvFrame_failed:
                          vpss_grp, ret);
         }
         long time_done = getms();
+
+        frame_index++;
         sample_print("done, time: %ld ms\n", time_done - time_start);
     }
     siamfcpp_cleanup(); // unload model, etc
@@ -296,21 +370,60 @@ static int vgsdrawV2(ot_video_frame_info* pframe, stmTrackerState* state) {
     td_s32 ret;
     ot_vgs_handle h_handle = -1;
     ot_vgs_task_attr vgs_task_attr = { 0 };
-    static ot_vgs_line stLines[4]; // 1 box = 4 lines
-    int thick = 8;
-    int color = 0x00FF00; // Green
+    static ot_vgs_line stLines[6]; // 1 box = 4 lines, 1 cross = 2 lines
+
+    int thick = 4;
+    // int color = 0x00FF00; // Green
+    int color = 0xFF0000; // Red
+    int cross_len = 6;
 
     int xs = (int)(state->cx - state->w * 0.5f) & ~1; // align even
     int ys = (int)(state->cy - state->h * 0.5f) & ~1;
     int xe = (int)(state->cx + state->w * 0.5f) & ~1;
     int ye = (int)(state->cy + state->h * 0.5f) & ~1;
 
-    // draw the 4 edges of the bounding box
-    stLines[0] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xs, ys}, .end_point={xe, ys}}; // top
-    stLines[1] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xs, ys}, .end_point={xs, ye}}; // left
-    stLines[2] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xe, ys}, .end_point={xe, ye}}; // right
-    stLines[3] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xs, ye}, .end_point={xe, ye}}; // bottom
+    int cx = (int)(state->cx) & ~1;
+    int cy = (int)(state->cy) & ~1;
 
+    int num_lines = 0;
+
+    if (is_detected) {
+        // draw the 4 edges of the bounding box
+        stLines[0] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xs, ys}, .end_point={xe, ys}}; // top
+        stLines[1] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xs, ys}, .end_point={xs, ye}}; // left
+        stLines[2] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xe, ys}, .end_point={xe, ye}}; // right
+        stLines[3] = (ot_vgs_line){.color=color, .thick=thick, .start_point={xs, ye}, .end_point={xe, ye}}; // bottom
+        // craw a cross to show the center
+        stLines[4] = (ot_vgs_line){
+            .color=color, 
+            .thick=thick, 
+            .start_point={cx - cross_len, cy}, 
+            .end_point={cx + cross_len, cy}
+        };
+        stLines[5] = (ot_vgs_line){
+            .color=color, 
+            .thick=thick, 
+            .start_point={cx, cy - cross_len}, 
+            .end_point={cx, cy + cross_len}
+        };
+        num_lines = 6;
+    } else {
+        // craw a cross to show the center
+        stLines[0] = (ot_vgs_line){
+            .color=color, 
+            .thick=thick, 
+            .start_point={cx - cross_len, cy}, 
+            .end_point={cx + cross_len, cy}
+        };
+        stLines[1] = (ot_vgs_line){
+            .color=color, 
+            .thick=thick, 
+            .start_point={cx, cy - cross_len}, 
+            .end_point={cx, cy + cross_len}
+        };
+        num_lines = 2;
+    }
+    
     ret = ss_mpi_vgs_begin_job(&h_handle);
     if (ret != TD_SUCCESS) {
         return TD_FAILURE;
@@ -327,7 +440,7 @@ static int vgsdrawV2(ot_video_frame_info* pframe, stmTrackerState* state) {
     }
 
     // Draw the box
-    ret = ss_mpi_vgs_add_draw_line_task(h_handle, &vgs_task_attr, stLines, 4);
+    ret = ss_mpi_vgs_add_draw_line_task(h_handle, &vgs_task_attr, stLines, num_lines);
     if (ret != TD_SUCCESS) {
         ss_mpi_vgs_cancel_job(h_handle);
         printf("ss_mpi_vgs_add_draw_line_task ret:%08X\n", ret);
@@ -377,5 +490,7 @@ void *siamfcpp_draw_run(void *parg) {
                          vpss_grp, ret);
         }
     }
-
 }
+
+
+

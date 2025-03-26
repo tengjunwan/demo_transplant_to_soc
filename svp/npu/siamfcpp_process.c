@@ -54,17 +54,23 @@ static int postprocess_score(const float *score, const float *bbox,
         // 尺寸变化
         float current_size = size_with_pad(w, h);
         float size_change = fmaxf(current_size / prev_size, prev_size / current_size);
-
+        // printf("size_change[%d]: %.2f\n", i, size_change);
         // 比例变化
         float current_ratio = w / h;
         float ratio_change = fmaxf(current_ratio / prev_ratio, prev_ratio / current_ratio);
+        // printf("ratio_change[%d]: %.2f\n", i, ratio_change);
 
         // 惩罚分数（因变形）
         penalty[i] = expf((1.0f - size_change * ratio_change) * penalty_k);
+        // printf("penalty[%d]: %.2f\n", i, penalty[i]);
         pscore[i] = penalty[i] * score[i];
+        // printf("score[%d]: %.2f\n", i, score[i]);
+        // printf("pscore[%d]: %.2f\n", i, pscore[i]);
 
         // 减小由于快速位置变化引起的分数
         pscore[i] = pscore[i] * (1 - window_influence) + consine_window[i] * window_influence;
+
+        // printf("pscore[%d] after: %.2f\n", i, pscore[i]);
 
         // 更新最佳分数
         if (pscore[i] > best_pscore) {
@@ -117,6 +123,10 @@ static void clipf_inplace(float* value, float min, float max) {
 
 void siamfcpp_result(const float *srcScore, unsigned int lenScore, const float *srcBbox, 
                      unsigned int lenBbox, const stmTrackerState *state, stmTrackerState *result_state) {
+    sample_print("       state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", state->cx, 
+        state->cy, state->w, state->h, state->score);
+    sample_print("result_state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", result_state->cx,
+            result_state->cy, result_state->w, result_state->h, result_state->score);
     // 提示：score.shape=(1, 289=17*17, 1), bbox.shape=(1, 289=17*17, 4)
     if (lenScore != 289 || lenBbox != 289 * 4) {
         return -1;
@@ -144,6 +154,11 @@ void siamfcpp_result(const float *srcScore, unsigned int lenScore, const float *
     result_state->h = bbox[3];
     result_state->score = pscore[best_id];
 
+    sample_print("       state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", state->cx, 
+        state->cy, state->w, state->h, state->score);
+    sample_print("result_state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", result_state->cx,
+         result_state->cy, result_state->w, result_state->h, result_state->score);
+
 
     // clipf_inplace(&result_state->cx, 0.0f, 303.0f);
     // clipf_inplace(&result_state->cy, 0.0f, 303.0f);
@@ -154,9 +169,11 @@ void siamfcpp_result(const float *srcScore, unsigned int lenScore, const float *
     return 0;
 }
 
-td_void siamfcpp_init(td_void)
-{   const char *om_model_path_template = "siamfcpp_template_direct_half.om";  
+td_void siamfcpp_init(td_void) {
+   const char *om_model_path_template = "siamfcpp_template_direct_half.om";  
     const char *om_model_path_search = "siamfcpp_search_direct_half.om";  
+    // const char *om_model_path_template = "siamfcpp_template_opt.om";  
+    // const char *om_model_path_search = "siamfcpp_search_opt.om";  
     td_s32 ret;
 
     // ===================acl init===================

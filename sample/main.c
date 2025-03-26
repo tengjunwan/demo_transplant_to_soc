@@ -51,7 +51,7 @@ static vdec_thread_param g_vdec_thread_param = {
     .min_buf_size = (FHD_WIDTH * FHD_HEIGHT * 3) >> 1, 
     .c_file_path = "res",
     // .c_file_name = "polo.h265",
-    .c_file_name = "output.h265",
+    .c_file_name = "mario_with_pipes.h265",
     .fps = 30, 
 };
 

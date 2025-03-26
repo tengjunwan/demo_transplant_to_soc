@@ -35,7 +35,7 @@ static KF_CorvarianceMatrix sigma_bar = {
 
 
 static float acc_std = 20.0f;
-static float dt = 0.33333f;
+static float dt = 1 / 30.0f;
 
 
 void kf_init(float x, float y, float vx, float vy) {
