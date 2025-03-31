@@ -26,6 +26,7 @@ void kf_correct(float zx, float zy, float meas_std);
 void kf_correct_without_measurement(void);
 void kf_get_predicted_position(float* x, float* y);
 void kf_get_corrected_position(float* x, float* y);
+void kf_set_velocity(float vx, float vy);
 
 
 #endif

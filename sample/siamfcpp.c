@@ -21,6 +21,7 @@
 #define CONTEXT_AMOUNT 0.5f
 #define SIZE_THRESHOLD 256.f
 #define SIAMFCPP_DEBUG_FLAG 0
+#define FRAME_COVERAGE_PER_THRESH 0.5f
 
 
 static td_bool is_detected = TD_FALSE;
@@ -60,6 +61,16 @@ static float get_size_template_crop(stmTrackerState* state) {
     float hc = h + CONTEXT_AMOUNT * (w + h);
     float size_template_crop = sqrtf(wc * hc);
     return size_template_crop;
+}
+
+
+static td_bool is_too_big_to_trust_kalman_filter(stmTrackerState* state) {
+    float frame_coverage_percentage = (state->w * state->h) / (VIDEO_PROCESS_WIDTH * VIDEO_PROCESS_HEIGHT);
+    if (frame_coverage_percentage > FRAME_COVERAGE_PER_THRESH) {
+        return TD_TRUE;
+    } else {
+        return TD_FALSE;
+    }
 }
 
 
@@ -283,20 +294,33 @@ void *siamfcpp_proc_run(void *parg) {
             continue;
         }
 
+        // use first frame to get template image
+        if (frame_index == 0) {
+            is_init = TD_FALSE;
+        } else {
+            is_init = TD_TRUE;
+        }
+
+
         // kalman filter prediction phase
         if (USE_KALMAN_FILTER && is_init) {
+            // if detected target occupies most of frame, velocity estimated by kalman filter tends to be inaccurate
+            if (is_too_big_to_trust_kalman_filter(state)) {
+                kf_set_velocity(0.0f, 0.0f);
+            }
             float ux = 0.0f;
             float uy = 0.0f;
             kf_predict(ux, uy);
             float kf_pred_cx, kf_pred_cy; 
             kf_get_predicted_position(&kf_pred_cx, &kf_pred_cy);
+            
             state->cx = kf_pred_cx;
             state->cy = kf_pred_cy;
         }
 
         // prepare image inputs for model inference
         float size_template_crop = get_size_template_crop(state);
-        target_too_big = size_template_crop > SIZE_THRESHOLD;  // to be used to determine which strategy to get images for model input
+        target_too_big = size_template_crop > SIZE_THRESHOLD;  // it determines strategy to get images for model inputs so that it can achieve better efficiency
         if (SIAMFCPP_DEBUG_FLAG) sample_print("frame_index: %d, target_too_big: %d", frame_index, target_too_big);
 
         // zero-init 
@@ -354,17 +378,6 @@ void *siamfcpp_proc_run(void *parg) {
                 rgbFrameCrop(&imgTemplate, &imgResizedFrameRGB, resizedCrop[0], resizedCrop[1]);
             }
 
-            if (SIAMFCPP_DEBUG_FLAG) {
-                char filename_resizedTarget[100];
-                if (is_init) {
-                    snprintf(filename_resizedTarget, sizeof(filename_resizedTarget), "./model_input/frame_%d_%d_%d_a.rgb", frame_index, imgSearch.width, imgSearch.height);
-                    save_rgb(filename_resizedTarget, &imgSearch);
-                } else {
-                    snprintf(filename_resizedTarget, sizeof(filename_resizedTarget), "./model_input/frame_%d_%d_%d_a.rgb", frame_index, imgTemplate.width, imgTemplate.height);
-                    save_rgb(filename_resizedTarget, &imgTemplate);
-                }
-            }
-
             // clean up: release intermediate images
 strategy_a_create_resizedRgbFrame_failed:
             ss_mpi_sys_munmap(imgResizedFrameRGB.virt_addr[0], imgResizedFrameRGB.width * imgResizedFrameRGB.height * 3);
@@ -412,16 +425,6 @@ strategy_a_create_rgbFrame_failed:
             } else {
                 rgbFrame2resize(&imgRGB, &imgTemplate);
             }
-            if (SIAMFCPP_DEBUG_FLAG) {
-                char filename_target[100];
-                if (is_init) {
-                    snprintf(filename_target, sizeof(filename_target), "./model_input/frame_%d_%d_%d_b.rgb", frame_index, imgSearch.width, imgSearch.height);
-                    save_rgb(filename_target, &imgSearch);
-                } else {
-                    snprintf(filename_target, sizeof(filename_target), "./model_input/frame_%d_%d_%d_b.rgb", frame_index, imgTemplate.width, imgTemplate.height);
-                    save_rgb(filename_target, &imgTemplate);
-                }
-            }
 
             // clean up: release intermediate images
 strategy_b_create_rgbFrame_failed:
@@ -439,17 +442,27 @@ strategy_b_create_yuvFrame_failed:
         long t_s_inference = getms();
         if (!is_init) {
             template_execute((td_void*)imgTemplate.virt_addr[0], imgTemplateSize);
-            is_init = TD_TRUE;
         } else {
             search_execute((td_void*)imgSearch.virt_addr[0], imgSearchSize, state, result_state);
         }
         long t_e_inference = getms();
         sample_print("model inference done, time: %ld ms\n", t_e_inference - t_s_inference);
 
+
+        if (SIAMFCPP_DEBUG_FLAG) {
+            char filename_target[100];
+            if (is_init) {
+                snprintf(filename_target, sizeof(filename_target), "./model_input/frame_%d_%d_%d_%.2f.rgb", frame_index, imgSearch.width, imgSearch.height, result_state->score);
+                save_rgb(filename_target, &imgSearch);
+            } else {
+                snprintf(filename_target, sizeof(filename_target), "./model_input/frame_%d_%d_%d_%.2f.rgb", frame_index, imgTemplate.width, imgTemplate.height, 1.0f);
+                save_rgb(filename_target, &imgTemplate);
+            }
+        }
+
         is_detected = result_state->score > SCORE_THRESHOLD;
-        // if (frame_index > 300) is_detected = 0;
-        printf("is_detected: %d\n", is_detected);
-        printf("result_state->score: %.2f, SCORE_THRESHOLD: %.2f\n", result_state->score, SCORE_THRESHOLD);
+        sample_print("is_detected: %d\n", is_detected);
+        sample_print("result_state->score: %.2f, SCORE_THRESHOLD: %.2f\n", result_state->score, SCORE_THRESHOLD);
         if (USE_KALMAN_FILTER) {
             if (is_detected) {
                 float meas_std = 0.1f;
@@ -472,37 +485,6 @@ strategy_b_create_yuvFrame_failed:
             state->cy, state->w, state->h, state->score);
         sample_print("result_state: cx: %.2f, cy: %.2f, w: %.2f, h: %.2f, score: %.2f\n", result_state->cx,
              result_state->cy, result_state->w, result_state->h, result_state->score);
-
-
-        // if (SIAMFCPP_DEBUG_FLAG) {
-        //     char filename_resize[100];
-        //     snprintf(filename_resize, sizeof(filename_resize), "./resize_img/frame_%d_%.2f.rgb", frame_index, result_state->score);
-        //     if (frame_index == 0) {
-        //         save_rgb(filename_resize, &imgTemplate);
-        //     } else {
-        //         save_rgb(filename_resize, &imgSearch);
-        //     }
-        //     char filename_crop[100];
-        //     snprintf(filename_crop, sizeof(filename_crop), "./crop_img/frame_%d.yuv", frame_index);
-        //     save_yuv420sp(filename_crop, &imgCrop);
-        // }
-        
-
-
-        // if (frame_index ==1) {
-        //     g_thdThread = 0;
-        // }
-
-
-
-        // clean up code
-// create_rgbFrame_failed:
-//         ss_mpi_sys_munmap(imgRGB.virt_addr[0], imgRGB.width * imgRGB.height * 3);
-//         ss_mpi_vb_release_blk(vb_blk_rgb); 
-
-// create_yuvFrame_failed:
-//         ss_mpi_sys_munmap(imgCrop.virt_addr[0], imgCrop.width * imgCrop.height * 3 / 2);
-//         ss_mpi_vb_release_blk(vb_blk_crop); 
         
         pthread_mutex_lock(&algolock);
         stateInfo->cx = state->cx;

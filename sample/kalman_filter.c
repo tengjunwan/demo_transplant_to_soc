@@ -119,7 +119,10 @@ void kf_get_corrected_position(float* x, float* y) {
     *y = mean.y;
 }
 
-
+void kf_set_velocity(float vx, float vy) {
+    mean.vx = vx;
+    mean.vy = vy;
+}
 
 
 

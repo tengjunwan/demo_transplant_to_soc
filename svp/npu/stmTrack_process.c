@@ -9,7 +9,8 @@
 
 // 参数常量
 static const float penalty_k = 0.04f;
-static const float window_influence = 0.21f;
+// static const float window_influence = 0.21f;
+static const float window_influence = 0.0f;
 static const float test_lr = 0.95f;
 static float consine_window[625];
 static bool consine_window_initialized = false;
