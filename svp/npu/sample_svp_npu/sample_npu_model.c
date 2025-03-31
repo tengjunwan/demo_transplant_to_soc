@@ -685,11 +685,11 @@ td_void cleanup_for_template_execute(td_s32 model_index) {
     }
     aclmdlDestroyDataset(g_npu_acl_model[model_index].input_dataset);  // destroy input dataset
 
-    // release output dataset only
-    aclmdlDestroyDataset(g_npu_acl_model[model_index].output_dataset); // release output dataset
+    // // release output dataset only
+    // aclmdlDestroyDataset(g_npu_acl_model[model_index].output_dataset); // release output dataset
 
-    // unload template model, destroy model desc, set flags and release resources related to 'g_npu_acl_model'
-    sample_npu_unload_model(model_index);
+    // // unload template model, destroy model desc, set flags and release resources related to 'g_npu_acl_model'
+    // sample_npu_unload_model(model_index);
 
     sample_svp_trace_info("template execution cleanup success\n");
 }
@@ -780,8 +780,10 @@ td_void cleanup_for_siamfcpp() {
     aclDestroyDataBuffer(data_bbox);
 
     // destroy output dataset of search model 
+    aclmdlDestroyDataset(g_npu_acl_model[0].output_dataset); 
     aclmdlDestroyDataset(g_npu_acl_model[1].output_dataset);
 
     // unload model
+    sample_npu_unload_model(0);
     sample_npu_unload_model(1);
 }
