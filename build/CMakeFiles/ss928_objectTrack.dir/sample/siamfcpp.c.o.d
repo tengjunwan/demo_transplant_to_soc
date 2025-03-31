@@ -24,6 +24,17 @@ CMakeFiles/ss928_objectTrack.dir/sample/siamfcpp.c.o: \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/stdio_lim.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/sys_errlist.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/stdio.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/math.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/math-vector.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/libm-simd-decl-stubs.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/floatn.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/floatn-common.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/flt-eval-method.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/fp-logb.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/fp-fast.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/mathcalls-helper-functions.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/mathcalls.h \
+ /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/mathinline.h \
  /home/tengjunwan/Project/demo/wenhao_new/ss928sdk/common/sample_comm.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/pthread.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/endian.h \
@@ -70,8 +81,6 @@ CMakeFiles/ss928_objectTrack.dir/sample/siamfcpp.c.o: \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/stdlib.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/waitflags.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/waitstatus.h \
- /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/floatn.h \
- /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/floatn-common.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/sys/types.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/sys/select.h \
  /opt/linux/x86-arm/aarch64-mix210-linux/target/usr/include/bits/select.h \

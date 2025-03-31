@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 
 #include "sample_comm.h"
 #include "sample_common_ive.h"
@@ -17,6 +18,11 @@
 #define SEARCH_FAKE_INPUT_SIZE 304
 #define SCORE_THRESHOLD 0.6f
 #define USE_KALMAN_FILTER 1
+#define CONTEXT_AMOUNT 0.5f
+#define SIZE_THRESHOLD 256.f
+#define SIAMFCPP_DEBUG_FLAG 0
+
+
 static td_bool is_detected = TD_FALSE;
 
 static ot_vpss_grp g_vpssGrp;
@@ -32,16 +38,34 @@ static long getms() {
     return ms;
 }
 
+
 static int next_multiple_of_16(int x) {
     return ((x / 16) + 1) * 16;
 }
 
-static void siamfcppTemplateGetCrop(stmTrackerState* state, float context_amount, int crop[4]) {
+
+static int nearest_multiple_of_16(int x) {
+    int result = ((x + 8) / 16) * 16; // rounding to neareast multiple of 16
+    if (result <16) {
+        result =16;
+    }
+    return result;
+}
+
+
+static float get_size_template_crop(stmTrackerState* state) {
     float w = state->w;
     float h = state->h;
-    float wc = w + context_amount * (w + h);
-    float hc = h + context_amount * (w + h);
+    float wc = w + CONTEXT_AMOUNT * (w + h);
+    float hc = h + CONTEXT_AMOUNT * (w + h);
     float size_template_crop = sqrtf(wc * hc);
+    return size_template_crop;
+}
+
+
+
+static void siamfcppTemplateGetCrop(stmTrackerState* state, int crop[4]) {
+    float size_template_crop = get_size_template_crop(state);
 
     // ensure size is a multiple of 16
     size_template_crop = (float)next_multiple_of_16((int)size_template_crop);
@@ -63,17 +87,16 @@ static void siamfcppTemplateGetCrop(stmTrackerState* state, float context_amount
 }
 
 
-static void siamfcppSearchGetCrop(stmTrackerState* state, float context_amount, int crop[4]) {
-    float w = state->w;
-    float h = state->h;
-    float wc = w + context_amount * (w + h);
-    float hc = h + context_amount * (w + h);
-    float size_template_crop = sqrtf(wc * hc);
+static void siamfcppSearchGetCrop(stmTrackerState* state, int crop[4]) {
+    float size_template_crop = get_size_template_crop(state);
     state->scale = size_template_crop / TEMPLATE_INPUT_SIZE;
     float size_search_crop = SEARCH_INPUT_SIZE * state->scale;
 
     // ensure size is a multiple of 16
     size_search_crop = (float)next_multiple_of_16((int)size_search_crop);
+
+    // update scale after round-off to multiples of 16
+    state->scale = size_search_crop / SEARCH_INPUT_SIZE;
 
     // calculate crop rectangle
     crop[0] = (int)(state->cx - size_search_crop * 0.5f);  // crop x
@@ -87,6 +110,44 @@ static void siamfcppSearchGetCrop(stmTrackerState* state, float context_amount, 
     crop[2] &= ~1;
     crop[3] &= ~1;
 }
+
+
+static void siamfcppSearchGetCropOnResizedFrame(stmTrackerState* state, int crop[4]) {
+    float cx = state->cx / state->scale;
+    float cy = state->cy / state->scale;
+    crop[0] = (int)(cx - SEARCH_FAKE_INPUT_SIZE * 0.5f);
+    crop[1] = (int)(cy - SEARCH_FAKE_INPUT_SIZE * 0.5f);
+    crop[2] = (int)SEARCH_FAKE_INPUT_SIZE;
+    crop[3] = (int)SEARCH_FAKE_INPUT_SIZE;
+}
+
+
+static void siamfcppTemplateGetCropOnResizedFrame(stmTrackerState* state, int crop[4]) {
+    float cx = state->cx / state->scale;
+    float cy = state->cy / state->scale;
+    crop[0] = (int)(cx - TEMPLATE_FAKE_INPUT_SIZE * 0.5f);
+    crop[1] = (int)(cy - TEMPLATE_FAKE_INPUT_SIZE * 0.5f);
+    crop[2] = (int)TEMPLATE_FAKE_INPUT_SIZE;
+    crop[3] = (int)TEMPLATE_FAKE_INPUT_SIZE;
+}
+
+
+
+static void siamfcppGetResizedFrameShape(stmTrackerState* state, td_s32 originWidth, td_s32 originHeight,td_s32* resizedWidth, td_s32* resizedHeight) {
+    float size_template_crop = get_size_template_crop(state);
+    float scale = size_template_crop / TEMPLATE_INPUT_SIZE;
+    state->scale = scale;
+    *resizedWidth = (int)(originWidth / scale);
+    *resizedHeight = (int)(originHeight / scale);
+    // ensure size is a multiple of 16
+    *resizedWidth = nearest_multiple_of_16(*resizedWidth);
+    *resizedHeight = nearest_multiple_of_16(*resizedHeight);
+
+    // update scale after round-off to multiples of 16
+    state->scale = (float)originWidth / (float)(*resizedWidth); 
+}
+
+
 
 static td_void save_rgb(const char* filename, ot_svp_img* img) {
     FILE *fp = fopen(filename, "wb");
@@ -165,10 +226,18 @@ void *siamfcpp_proc_run(void *parg) {
     // float y0 = 228.0f;
     // float x1 = 366.0f;
     // float y1 = 336.0f;
-    float x0 = 40.0f;
-    float y0 = 30.0f;
-    float x1 = 100.0f;
-    float y1 = 110.0f;
+
+    // mario setting
+    // float x0 = 40.0f;
+    // float y0 = 30.0f;
+    // float x1 = 100.0f;
+    // float y1 = 110.0f;
+
+    // balloon setting
+    float x0 = 228.0f;
+    float y0 = 96.0f;
+    float x1 = 360.0f;
+    float y1 = 212.0f;
 
     state->cx = (x0 + x1) * 0.5f;
     state->cy = (y0 + y1) * 0.5f;
@@ -202,9 +271,8 @@ void *siamfcpp_proc_run(void *parg) {
     size_t imgTemplateSize = imgTemplate.width * imgTemplate.height * 3;  // bytes for uint8 input
     size_t imgSearchSize = imgSearch.width * imgSearch.height * 3;
 
-    float context_amount = 0.5f;
     td_bool is_init = TD_FALSE; 
-    // td_bool is_detected = TD_FALSE;
+    td_bool target_too_big = TD_FALSE;
     int frame_index = 0;
     while (g_thdThread) {
         long time_start = getms();
@@ -215,9 +283,8 @@ void *siamfcpp_proc_run(void *parg) {
             continue;
         }
 
+        // kalman filter prediction phase
         if (USE_KALMAN_FILTER && is_init) {
-
-            printf("---------------im here----------------\n");
             float ux = 0.0f;
             float uy = 0.0f;
             kf_predict(ux, uy);
@@ -227,46 +294,147 @@ void *siamfcpp_proc_run(void *parg) {
             state->cy = kf_pred_cy;
         }
 
-        // crop
-        long t_s_crop = getms();
-        int crop[4] = {0};  // xywh
-        if (!is_init) {
-            siamfcppTemplateGetCrop(state, context_amount, crop);
-        } else {
-            siamfcppSearchGetCrop(state, context_amount, crop);
-        }
-        printf("crop: %d, %d, %d, %d\n", crop[0], crop[1], crop[2], crop[3]);
-        ot_svp_img imgCrop;
-        ot_vb_blk vb_blk_crop = createYuv420spFrame(&imgCrop, crop[2], crop[3]);
-        if (vb_blk_crop == OT_VB_INVALID_HANDLE) {
-            sample_print("createYuv420spFrame %d-%d failed\n", crop[2], crop[3]);
-            goto create_yuvFrame_failed;
-        }
-        yuv420spFrameCrop(&imgCrop, &frame_info, crop[0], crop[1]);
-        long t_e_crop = getms();
-        sample_print("crop done, time: %ld ms\n", t_e_crop - t_s_crop);
+        // prepare image inputs for model inference
+        float size_template_crop = get_size_template_crop(state);
+        target_too_big = size_template_crop > SIZE_THRESHOLD;  // to be used to determine which strategy to get images for model input
+        if (SIAMFCPP_DEBUG_FLAG) sample_print("frame_index: %d, target_too_big: %d", frame_index, target_too_big);
 
-        // color conversion(YUV420SP->RGB)
-        long t_s_color = getms();
-        ot_svp_img imgRGB;
-        ot_vb_blk vb_blk_rgb = createRgbFrame(&imgRGB, imgCrop.width, imgCrop.height); 
-        if (vb_blk_rgb == OT_VB_INVALID_HANDLE) {
-            sample_print("createRgbFrame %d-%d failed\n", imgCrop.width, imgCrop.height);
-            goto create_rgbFrame_failed;
-        }
-        yuv420spFrame2rgb(&imgCrop, &imgRGB);
-        long t_e_color = getms();
-        sample_print("color conversion done, time: %ld ms\n", t_e_color - t_s_color);
-
-        // resize
-        long t_s_resize = getms();
-        if (!is_init) {
-            rgbFrame2resize(&imgRGB, &imgTemplate);
+        // zero-init 
+        if (is_init) {
+            clear_svp_imgRGB(imgSearch);
         } else {
-            rgbFrame2resize(&imgRGB, &imgSearch);
+            clear_svp_imgRGB(imgTemplate);
         }
-        long t_e_resize = getms();
-        sample_print("resize done, time: %ld ms\n", t_e_resize - t_s_resize);
+
+        long t_s_prepare_model_input = getms();
+        if (target_too_big) {
+            // strategy A: resize first then crop
+            // color conversion( from yuv to rgb ) for resize
+            ot_svp_img imgFrameRGB;
+            ot_vb_blk vb_blk_frame = createRgbFrame(&imgFrameRGB, frame_info.video_frame.width, frame_info.video_frame.height);
+            if (vb_blk_frame == OT_VB_INVALID_HANDLE) {
+                sample_print("createRGBFrame %d-%d failed\n", frame_info.video_frame.width, frame_info.video_frame.height);
+                goto strategy_a_create_rgbFrame_failed;
+            } 
+            videoFrame2rgb(&frame_info, &imgFrameRGB);
+            
+            if (SIAMFCPP_DEBUG_FLAG) {
+                char filename_frameRGB[100];
+                snprintf(filename_frameRGB, sizeof(filename_frameRGB), "./frame/frame_%d_%d_%d_a.rgb", frame_index, frame_info.video_frame.width, frame_info.video_frame.height);
+                save_rgb(filename_frameRGB, &imgFrameRGB);
+            }
+
+            // resize frame
+            ot_svp_img imgResizedFrameRGB;
+            td_s32 resized_frame_w;
+            td_s32 resized_frame_h;
+            siamfcppGetResizedFrameShape(state, frame_info.video_frame.width, frame_info.video_frame.height, &resized_frame_w, &resized_frame_h);
+            ot_vb_blk vb_blk_resizedFrame = createRgbFrame(&imgResizedFrameRGB, resized_frame_w, resized_frame_h);
+            if (vb_blk_resizedFrame == OT_VB_INVALID_HANDLE) {
+                sample_print("createResizedRGBFrame %d-%d failed\n", resized_frame_w, resized_frame_h);
+                goto strategy_a_create_resizedRgbFrame_failed;
+            } 
+            rgbFrame2resize(&imgFrameRGB, &imgResizedFrameRGB); // call resize function
+
+            if (SIAMFCPP_DEBUG_FLAG) {
+                char filename_resizedFrameRGB[100];
+                snprintf(filename_resizedFrameRGB, sizeof(filename_resizedFrameRGB), "./resize_frame/frame_%d_%d_%d_a.rgb", frame_index, resized_frame_w, resized_frame_h);
+                save_rgb(filename_resizedFrameRGB, &imgResizedFrameRGB);
+            }
+
+            // crop
+            int resizedCrop[4] = {0}; // xywh
+            if (is_init) {
+                // crop search image
+                siamfcppSearchGetCropOnResizedFrame(state, resizedCrop); 
+                rgbFrameCrop(&imgSearch, &imgResizedFrameRGB, resizedCrop[0], resizedCrop[1]);
+            } else {
+                // crop template image
+                siamfcppTemplateGetCropOnResizedFrame(state, resizedCrop);
+                rgbFrameCrop(&imgTemplate, &imgResizedFrameRGB, resizedCrop[0], resizedCrop[1]);
+            }
+
+            if (SIAMFCPP_DEBUG_FLAG) {
+                char filename_resizedTarget[100];
+                if (is_init) {
+                    snprintf(filename_resizedTarget, sizeof(filename_resizedTarget), "./model_input/frame_%d_%d_%d_a.rgb", frame_index, imgSearch.width, imgSearch.height);
+                    save_rgb(filename_resizedTarget, &imgSearch);
+                } else {
+                    snprintf(filename_resizedTarget, sizeof(filename_resizedTarget), "./model_input/frame_%d_%d_%d_a.rgb", frame_index, imgTemplate.width, imgTemplate.height);
+                    save_rgb(filename_resizedTarget, &imgTemplate);
+                }
+            }
+
+            // clean up: release intermediate images
+strategy_a_create_resizedRgbFrame_failed:
+            ss_mpi_sys_munmap(imgResizedFrameRGB.virt_addr[0], imgResizedFrameRGB.width * imgResizedFrameRGB.height * 3);
+            ss_mpi_vb_release_blk(vb_blk_resizedFrame);
+strategy_a_create_rgbFrame_failed:
+            ss_mpi_sys_munmap(imgFrameRGB.virt_addr[0], imgFrameRGB.width * imgFrameRGB.height * 3);
+            ss_mpi_vb_release_blk(vb_blk_frame); 
+        } else {
+            // strategy B: crop first then resize
+            // crop (on YUV420sp format)
+            int crop[4] = {0};  // xywh
+            if (is_init) {
+                // get crop area for search
+                siamfcppSearchGetCrop(state, crop);
+            } else {
+                // get crop area for template
+                siamfcppTemplateGetCrop(state, crop);
+            }
+            ot_svp_img imgCrop;
+            ot_vb_blk vb_blk_crop = createYuv420spFrame(&imgCrop, crop[2], crop[3]);
+            if (vb_blk_crop == OT_VB_INVALID_HANDLE) {
+                sample_print("createYuv420spFrame %d-%d failed\n", crop[2], crop[3]);
+                goto strategy_b_create_yuvFrame_failed;
+            }
+            yuv420spFrameCrop(&imgCrop, &frame_info, crop[0], crop[1]);  
+
+            // color conversion( from yuv to rgb ) for resize
+            ot_svp_img imgRGB;
+            ot_vb_blk vb_blk_rgb = createRgbFrame(&imgRGB, imgCrop.width, imgCrop.height); 
+            if (vb_blk_rgb == OT_VB_INVALID_HANDLE) {
+                sample_print("createRgbFrame %d-%d failed\n", imgCrop.width, imgCrop.height);
+                goto strategy_b_create_rgbFrame_failed;
+            }
+            yuv420spFrame2rgb(&imgCrop, &imgRGB);
+
+            if (SIAMFCPP_DEBUG_FLAG) {
+                char filename_croppedFrameRGB[100];
+                snprintf(filename_croppedFrameRGB, sizeof(filename_croppedFrameRGB), "./crop/frame_%d_%d_%d_b.rgb", frame_index, imgRGB.width, imgRGB.height);
+                save_rgb(filename_croppedFrameRGB, &imgRGB);
+            }
+
+            // resize
+            if (is_init) {
+                rgbFrame2resize(&imgRGB, &imgSearch);
+            } else {
+                rgbFrame2resize(&imgRGB, &imgTemplate);
+            }
+            if (SIAMFCPP_DEBUG_FLAG) {
+                char filename_target[100];
+                if (is_init) {
+                    snprintf(filename_target, sizeof(filename_target), "./model_input/frame_%d_%d_%d_b.rgb", frame_index, imgSearch.width, imgSearch.height);
+                    save_rgb(filename_target, &imgSearch);
+                } else {
+                    snprintf(filename_target, sizeof(filename_target), "./model_input/frame_%d_%d_%d_b.rgb", frame_index, imgTemplate.width, imgTemplate.height);
+                    save_rgb(filename_target, &imgTemplate);
+                }
+            }
+
+            // clean up: release intermediate images
+strategy_b_create_rgbFrame_failed:
+        ss_mpi_sys_munmap(imgRGB.virt_addr[0], imgRGB.width * imgRGB.height * 3);
+        ss_mpi_vb_release_blk(vb_blk_rgb); 
+strategy_b_create_yuvFrame_failed:
+        ss_mpi_sys_munmap(imgCrop.virt_addr[0], imgCrop.width * imgCrop.height * 3 / 2);
+        ss_mpi_vb_release_blk(vb_blk_crop); 
+        }
+
+        long t_e_prepare_model_input = getms();
+        sample_print("prepare model inputs done, time: %ld ms\n", t_e_prepare_model_input - t_s_prepare_model_input);
+
 
         long t_s_inference = getms();
         if (!is_init) {
@@ -306,18 +474,19 @@ void *siamfcpp_proc_run(void *parg) {
              result_state->cy, result_state->w, result_state->h, result_state->score);
 
 
-        // debug 
-        // char filename_resize[100];
-        // snprintf(filename_resize, sizeof(filename_resize), "./resize_img/frame_%d_%.2f.rgb", frame_index, result_state->score);
-        // if (frame_index == 0) {
-        //     save_rgb(filename_resize, &imgTemplate);
-        // } else {
-        //     save_rgb(filename_resize, &imgSearch);
+        // if (SIAMFCPP_DEBUG_FLAG) {
+        //     char filename_resize[100];
+        //     snprintf(filename_resize, sizeof(filename_resize), "./resize_img/frame_%d_%.2f.rgb", frame_index, result_state->score);
+        //     if (frame_index == 0) {
+        //         save_rgb(filename_resize, &imgTemplate);
+        //     } else {
+        //         save_rgb(filename_resize, &imgSearch);
+        //     }
+        //     char filename_crop[100];
+        //     snprintf(filename_crop, sizeof(filename_crop), "./crop_img/frame_%d.yuv", frame_index);
+        //     save_yuv420sp(filename_crop, &imgCrop);
         // }
-
-        // char filename_crop[100];
-        // snprintf(filename_crop, sizeof(filename_crop), "./crop_img/frame_%d.yuv", frame_index);
-        // save_yuv420sp(filename_crop, &imgCrop);
+        
 
 
         // if (frame_index ==1) {
@@ -327,13 +496,13 @@ void *siamfcpp_proc_run(void *parg) {
 
 
         // clean up code
-create_rgbFrame_failed:
-        ss_mpi_sys_munmap(imgRGB.virt_addr[0], imgRGB.width * imgRGB.height * 3);
-        ss_mpi_vb_release_blk(vb_blk_rgb); 
+// create_rgbFrame_failed:
+//         ss_mpi_sys_munmap(imgRGB.virt_addr[0], imgRGB.width * imgRGB.height * 3);
+//         ss_mpi_vb_release_blk(vb_blk_rgb); 
 
-create_yuvFrame_failed:
-        ss_mpi_sys_munmap(imgCrop.virt_addr[0], imgCrop.width * imgCrop.height * 3 / 2);
-        ss_mpi_vb_release_blk(vb_blk_crop); 
+// create_yuvFrame_failed:
+//         ss_mpi_sys_munmap(imgCrop.virt_addr[0], imgCrop.width * imgCrop.height * 3 / 2);
+//         ss_mpi_vb_release_blk(vb_blk_crop); 
         
         pthread_mutex_lock(&algolock);
         stateInfo->cx = state->cx;
@@ -353,6 +522,7 @@ create_yuvFrame_failed:
         frame_index++;
         sample_print("done, time: %ld ms\n", time_done - time_start);
     }
+    
     siamfcpp_cleanup(); // unload model, etc
 
     if (state) {

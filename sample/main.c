@@ -51,7 +51,8 @@ static vdec_thread_param g_vdec_thread_param = {
     .min_buf_size = (FHD_WIDTH * FHD_HEIGHT * 3) >> 1, 
     .c_file_path = "res",
     // .c_file_name = "polo.h265",
-    .c_file_name = "mario_with_pipes.h265",
+    // .c_file_name = "mario_with_pipes.h265",
+    .c_file_name = "balloon.h265",
     .fps = 30, 
 };
 
@@ -197,8 +198,10 @@ static td_s32 sample_start_all(td_void) {
     ot_vo_layer vo_layer = VO_LAYER;
     ot_vo_chn vo_chn = VO_CHN;
     ot_size size;
-    size.width = TEST_VIDEO_WIDTH;
-    size.height = TEST_VIDEO_HEIGHT;
+    // size.width = TEST_VIDEO_WIDTH;
+    // size.height = TEST_VIDEO_HEIGHT;
+    size.width = 8000;
+    size.height = 6000;
 
     ret = sample_start_vdec(&size);
     if (ret != TD_SUCCESS) {
